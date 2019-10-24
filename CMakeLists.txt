@@ -15,6 +15,8 @@ find_package(rclcpp REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(ament_cmake REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(builtin_interfaces REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 set(srv_files
@@ -22,7 +24,7 @@ set(srv_files
 
 rosidl_generate_interfaces(${PROJECT_NAME}
   ${srv_files}
-  DEPENDENCIES geometry_msgs
+  DEPENDENCIES geometry_msgs builtin_interfaces std_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

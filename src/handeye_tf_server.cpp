@@ -13,53 +13,86 @@
   * limitations under the License.
   */
 
+#include <chrono>
 #include <tf2_ros/buffer.h>
 #include <rclcpp/rclcpp.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <handeye_tf_service/srv/handeye_tf.hpp>
 #include <geometry_msgs/msg/transform_stamped.h>
+#include <tf2_ros/static_transform_broadcaster.h>
 
 using HandeyeTF = handeye_tf_service::srv::HandeyeTF;
+using namespace std::chrono_literals;
 
 class ServerNode : public rclcpp::Node
 {
 public:
   explicit ServerNode(const rclcpp::NodeOptions & options)
-  : Node("handeye_tf_server", options)
+  : Node("handeye_tf_server", options), broadcaster_(this)
   {
+    // Init tf message
+    tf_msg_ = std::shared_ptr<geometry_msgs::msg::TransformStamped>();
+    
+    // Init timer
+    timer_ = this->create_wall_timer(
+      100ms, std::bind(&ServerNode::timer_callback, this));
+
     // Init tf listener
     rclcpp::Clock::SharedPtr clock = std::make_shared<rclcpp::Clock>(RCL_SYSTEM_TIME);
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(clock);
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
+    // Service handler
     auto handle_service =
       [this](const std::shared_ptr<rmw_request_id_t> request_header,
         const std::shared_ptr<HandeyeTF::Request> request,
         std::shared_ptr<HandeyeTF::Response> response) -> void
       {
-        (void)request_header;
-        RCLCPP_INFO(this->get_logger(), "Incoming request\nframe_id: %s child_frame_id: %s",
-          request->frame_id.data(), request->child_frame_id.data());
+        if (request->publish.data) // Publish the camera-robot transform
+          tf_msg_ = std::make_shared<geometry_msgs::msg::TransformStamped>(request->transform);
+        else // Lookup the requested transform
+        {
+          (void)request_header;
+          RCLCPP_INFO(this->get_logger(), "Incoming request\nframe_id: %s child_frame_id: %s",
+            request->transform.header.frame_id.data(), request->transform.child_frame_id.data());
 
-        try
-        {
-          response->transform = tf_buffer_->lookupTransform(request->frame_id, request->child_frame_id, tf2::get_now());
-        }
-        catch (tf2::TransformException &ex)
-        {
-          std::string temp = ex.what();
-          RCLCPP_WARN(this->get_logger(), "%s", temp.c_str());
+          try
+          {
+            response->tf_lookup_result = tf_buffer_->lookupTransform(request->transform.header.frame_id, 
+                                    request->transform.child_frame_id, tf2::get_now());
+          }
+          catch (tf2::TransformException &ex)
+          {
+            std::string temp = ex.what();
+            RCLCPP_WARN(this->get_logger(), "%s", temp.c_str());
+          }
         }
       };
+
     // Create a service that will use the callback function to handle requests.
     srv_ = create_service<HandeyeTF>("handeye_tf_service", handle_service);
     RCLCPP_INFO(this->get_logger(), "Handeye TF service created.");
   }
 
 private:
+  void timer_callback()
+  {
+    broadcaster_.sendTransform(*tf_msg_);
+  }
+
+  // Handeye service
   rclcpp::Service<HandeyeTF>::SharedPtr srv_;
+
+  // Variables used for looking up tf transforms
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
   std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
+  // Timer used for static transform publish 
+  rclcpp::TimerBase::SharedPtr timer_;
+  // TF message for camera w.r.t robot transform
+  std::shared_ptr<geometry_msgs::msg::TransformStamped> tf_msg_;
+  // TF broadcaster
+  tf2_ros::StaticTransformBroadcaster broadcaster_;
 };
 
 int main(int argc, char ** argv)
